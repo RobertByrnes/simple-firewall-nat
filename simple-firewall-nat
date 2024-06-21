@@ -1,0 +1,123 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          simple-firewall-nat
+# Required-Start:    $network
+# Required-Stop:     $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Simple firewall script for NAT
+# Description:       This script sets up NAT and forwarding rules.
+### END INIT INFO
+
+# Author: Robert Byrnes
+# License: This script is licensed for commercial use without recognition for the author.
+
+# Updated for Ubuntu 24.04 compatibility
+FWVER=1.0
+printf "\n\nLoading simple-firewall-nat version $FWVER..\n\n"
+IPTABLES=/sbin/iptables
+DEPMOD=/sbin/depmod
+MODPROBE=/sbin/modprobe
+INTIF="eth0"
+EXTIF="wlan0"
+
+# Start Firewall Function
+start_firewall() {
+  printf " External Interface: %s\n" "$EXTIF"
+  printf " Internal Interface: %s\n" "$INTIF"
+  printf " loading modules: "
+  printf " - Verifying that all kernel modules are ok\n"
+  $DEPMOD -a
+  printf "----------------------------------------------------------------------\n"
+  printf "ip_tables, "
+  $MODPROBE ip_tables
+  printf "ip_conntrack, "
+  $MODPROBE ip_conntrack
+  printf "ip_conntrack_ftp, "
+  $MODPROBE ip_conntrack_ftp
+  printf "ip_conntrack_irc, "
+  $MODPROBE ip_conntrack_irc
+  printf "iptable_nat, "
+  $MODPROBE iptable_nat
+  printf "ip_nat_ftp, "
+  $MODPROBE ip_nat_ftp
+  printf "----------------------------------------------------------------------\n"
+  printf " Done loading modules.\n\n"
+
+  printf " Enabling forwarding..\n"
+  echo "1" > /proc/sys/net/ipv4/ip_forward
+
+  printf " Enabling DynamicAddr..\n"
+  echo "1" > /proc/sys/net/ipv4/ip_dynaddr
+
+  printf " Clearing any existing rules and setting default policy..\n"
+  $IPTABLES -P INPUT ACCEPT
+  $IPTABLES -F INPUT
+  $IPTABLES -P OUTPUT ACCEPT
+  $IPTABLES -F OUTPUT
+  $IPTABLES -P FORWARD DROP
+  $IPTABLES -F FORWARD
+  $IPTABLES -t nat -F
+
+  printf " FWD: Allow all connections OUT and only existing and related ones IN\n"
+  $IPTABLES -A FORWARD -i $EXTIF -o $INTIF -m state --state ESTABLISHED,RELATED -j ACCEPT
+  $IPTABLES -A FORWARD -i $INTIF -o $EXTIF -j ACCEPT
+  $IPTABLES -A FORWARD -j LOG
+
+  printf " Enabling SNAT (MASQUERADE) functionality on %s\n" "$EXTIF"
+  $IPTABLES -t nat -A POSTROUTING -o $EXTIF -j MASQUERADE
+
+  printf "\nsimple-firewall-nat v%s done.\n\n" "$FWVER"
+}
+
+# Stop Firewall Function
+stop_firewall() {
+  printf "Stopping simple-firewall-nat...\n"
+
+  # Disable forwarding
+  echo "0" > /proc/sys/net/ipv4/ip_forward
+  echo "0" > /proc/sys/net/ipv4/ip_dynaddr
+
+  # Clear all iptables rules and set default policies
+  $IPTABLES -P INPUT ACCEPT
+  $IPTABLES -P OUTPUT ACCEPT
+  $IPTABLES -P FORWARD DROP
+
+  $IPTABLES -F INPUT
+  $IPTABLES -F OUTPUT
+  $IPTABLES -F FORWARD
+  $IPTABLES -t nat -F
+  $IPTABLES -t mangle -F
+
+  printf "simple-firewall-nat stopped.\n"
+}
+
+# Status Function
+status_firewall() {
+  printf "simple-firewall-nat status:\n"
+  $IPTABLES -L -v -n
+}
+
+# Carry out specific functions when asked to by the system
+case "$1" in
+  start)
+    start_firewall
+    ;;
+  stop)
+    stop_firewall
+    ;;
+  restart)
+    printf "Restarting simple-firewall-nat\n"
+    stop_firewall
+    start_firewall
+    ;;
+  status)
+    status_firewall
+    ;;
+  *)
+    printf "Usage: /etc/init.d/simple-firewall-nat {start|stop|restart|status}\n"
+    exit 1
+    ;;
+esac
+
+exit 0
